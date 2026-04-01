@@ -1,4 +1,4 @@
-# SignalRGB Wallpaper Engine
+# Skydimo Ambient LED Strip Lights Plugin for SignalRGB
 ![Github All Releases](https://img.shields.io/github/downloads/qiangqiang101/Skydimo-Ambient-LED-Strip-Lights-Plugin-for-SignalRGB/total.svg)
 ![GitHub release (latest by date)](https://img.shields.io/github/v/release/qiangqiang101/Skydimo-Ambient-LED-Strip-Lights-Plugin-for-SignalRGB)
 ![GitHub](https://img.shields.io/github/license/qiangqiang101/Skydimo-Ambient-LED-Strip-Lights-Plugin-for-SignalRGB)
