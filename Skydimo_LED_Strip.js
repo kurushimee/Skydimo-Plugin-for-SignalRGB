@@ -6,7 +6,8 @@ export function Publisher() { return "I'm Not MentaL"; }
 export function Documentation() { return "troubleshooting/skydimo"; }
 export function Type() { return "serial"; }
 export function DeviceType() { return "lightingcontroller"; }
-export function ImageUrl() { return "https://assets.signalrgb.com/devices/brands/phanteks/led-strips/led-strip.png"; }
+// export function Size() { return [15, 1]; }
+export function SupportsSubdevices() { return true; }
 /* global
 shutdownColor:readonly
 LightingMode:readonly
@@ -23,90 +24,86 @@ export function ControllableParameters() {
 let skydimoPortName = null;
 let skydimoModel = null;
 let skydimoInfoRead = false;
+let vLedNames = [];
+let vLedPositions = [];
 
 const deviceConfig = {
     // 2-zone models
-    "SK0201": { vLedPositions: [], vLedNames: [], size: [0, 0] },
-    "SK0202": { vLedPositions: [], vLedNames: [], size: [0, 0] },
-    "SK0204": { vLedPositions: [], vLedNames: [], size: [0, 0] },
-    "SK0F01": { vLedPositions: [], vLedNames: [], size: [0, 0] },
-    "SK0F02": { vLedPositions: [], vLedNames: [], size: [0, 0] },
+    "SK0201": { layout: 2, zones: [20, 20], total: 40, image: "SK02" },
+    "SK0202": { layout: 2, zones: [30, 30], total: 60, image: "SK02" },
+    "SK0204": { layout: 2, zones: [25, 25], total: 50, image: "SK02" },
+    "SK0F01": { layout: 2, zones: [29, 29], total: 58, image: "SK0F" },
+    "SK0F02": { layout: 2, zones: [25, 25], total: 50, image: "SK0F" },
 
     // 3-zone models
-    "SK0121": { vLedPositions: [], vLedNames: [], size: [0, 0] },
-    "SK0124": { vLedPositions: [], vLedNames: [], size: [0, 0] },
-    "SK0127": { vLedPositions: [], vLedNames: [], size: [0, 0] },
-    "SK0132": { vLedPositions: [], vLedNames: [], size: [0, 0] },
-    "SK0134": { vLedPositions: [], vLedNames: [], size: [0, 0] },
-    "SK0149": { vLedPositions: [], vLedNames: [], size: [0, 0] },
+    "SK0121": { layout: 3, zones: [13, 25, 13], total: 51, image: "SK01" },
+    "SK0124": { layout: 3, zones: [14, 26, 14], total: 54, image: "SK01" },
+    "SK0127": { layout: 3, zones: [17, 31, 17], total: 65, image: "SK01" },
+    "SK0132": { layout: 3, zones: [20, 37, 20], total: 77, image: "SK01" },
+    "SK0134": { layout: 3, zones: [15, 41, 15], total: 71, image: "SK01" },
+    "SK0149": { layout: 3, zones: [19, 69, 19], total: 107, image: "SK01" },
 
     // 4-zone models
-    "SK0L21": { vLedPositions: [], vLedNames: [], size: [0, 0] },
-    "SK0L24": { vLedPositions: [], vLedNames: [], size: [0, 0] },
-    "SK0L27": {
-        vLedPositions: [
-            [0, 17], [0, 16], [0, 15], [0, 14], [0, 13], [0, 12], [0, 11], [0, 10], [0, 9], [0, 8], [0, 7], [0, 6], [0, 5], [0, 4], [0, 3], [0, 2], [0, 1], [1, 0], [2, 0], [3, 0], [4, 0], [5, 0], [6, 0], [7, 0], [8, 0], [9, 0], [10, 0],
-            [11, 0], [12, 0], [13, 0], [14, 0], [15, 0], [16, 0], [17, 0], [18, 0], [19, 0], [20, 0], [21, 0], [22, 0], [23, 0], [24, 0], [25, 0], [26, 0], [27, 0], [28, 0], [29, 0], [30, 0], [31, 0], [32, 1], [32, 2], [32, 3],
-            [32, 4], [32, 5], [32, 6], [32, 7], [32, 8], [32, 9], [32, 10], [32, 11], [32, 12], [32, 13], [32, 14], [32, 15], [32, 16], [32, 17], [31, 18], [30, 18], [29, 18], [28, 18], [27, 18], [26, 18], [25, 18], [24, 18],
-            [23, 18], [22, 18], [21, 18], [20, 18], [19, 18], [18, 18], [17, 18], [16, 18], [15, 18], [14, 18], [13, 18], [12, 18], [11, 18], [10, 18], [9, 18], [8, 18], [7, 18], [6, 18], [5, 18], [4, 18], [3, 18], [2, 18], [1, 18]
-        ],
-        vLedNames: [
-            "Led1", "Led2", "Led3", "Led4", "Led5", "Led6", "Led7", "Led8", "Led9", "Led10", "Led11", "Led12", "Led13", "Led14", "Led15", "Led16", "Led17", "Led18", "Led19", "Led20", "Led21", "Led22", "Led23",
-            "Led24", "Led25", "Led26", "Led27", "Led28", "Led29", "Led30", "Led31", "Led32", "Led33", "Led34", "Led35", "Led36", "Led37", "Led38", "Led39", "Led40", "Led41", "Led42", "Led43", "Led44", "Led45",
-            "Led46", "Led47", "Led48", "Led49", "Led50", "Led51", "Led52", "Led53", "Led54", "Led55", "Led56", "Led57", "Led58", "Led59", "Led60", "Led61", "Led62", "Led63", "Led64", "Led65", "Led66", "Led67",
-            "Led68", "Led69", "Led70", "Led71", "Led72", "Led73", "Led74", "Led75", "Led76", "Led77", "Led78", "Led79", "Led80", "Led81", "Led82", "Led83", "Led84", "Led85", "Led86", "Led87", "Led88", "Led89",
-            "Led90", "Led91", "Led92", "Led93", "Led94", "Led95", "Led96"
-        ],
-        size: [33, 19]
-    },
-    "SK0L32": { vLedPositions: [], vLedNames: [], size: [0, 0] },
-    "SK0L34": { vLedPositions: [], vLedNames: [], size: [0, 0] },
+    "SK0L21": { layout: 4, zones: [13, 25, 13, 25], total: 76, image: "SK0L" },
+    "SK0L24": { layout: 4, zones: [14, 26, 14, 26], total: 80, image: "SK0L" },
+    "SK0L27": { layout: 4, zones: [17, 31, 17, 31], total: 96, image: "SK0L" },
+    "SK0L32": { layout: 4, zones: [20, 37, 20, 37], total: 114, image: "SK0L" },
+    "SK0L34": { layout: 4, zones: [15, 41, 15, 41], total: 112, image: "SK0L" },
 
     // SKA series
-    "SKA124": { vLedPositions: [], vLedNames: [], size: [0, 0] },
-    "SKA127": { vLedPositions: [], vLedNames: [], size: [0, 0] },
-    "SKA132": { vLedPositions: [], vLedNames: [], size: [0, 0] },
-    "SKA134": { vLedPositions: [], vLedNames: [], size: [0, 0] },
+    "SKA124": { layout: 3, zones: [18, 34, 18], total: 70, image: "SKA1" },
+    "SKA127": { layout: 3, zones: [20, 41, 20], total: 81, image: "SKA1" },
+    "SKA132": { layout: 3, zones: [25, 45, 25], total: 95, image: "SKA1" },
+    "SKA134": { layout: 3, zones: [21, 51, 21], total: 93, image: "SKA1" },
 
     // Single-zone LED strip models
-    "SK0402": { vLedPositions: [], vLedNames: [], size: [0, 0] },
-    "SK0403": { vLedPositions: [], vLedNames: [], size: [0, 0] },
-    "SK0404": { vLedPositions: [], vLedNames: [], size: [0, 0] },
-    "SK0901": { vLedPositions: [], vLedNames: [], size: [0, 0] },
-    "SK0801": { vLedPositions: [], vLedNames: [], size: [0, 0] },
-    "SK0803": { vLedPositions: [], vLedNames: [], size: [0, 0] },
-    "SK0E01": { vLedPositions: [], vLedNames: [], size: [0, 0] },
-    "SK0H01": { vLedPositions: [], vLedNames: [], size: [0, 0] },
-    "SK0H02": { vLedPositions: [], vLedNames: [], size: [0, 0] },
-    "SK0S01": { vLedPositions: [], vLedNames: [], size: [0, 0] },
-    "SK0J01": { vLedPositions: [], vLedNames: [], size: [0, 0] },
-    "SK0K01": { vLedPositions: [], vLedNames: [], size: [0, 0] },
-    "SK0K02": { vLedPositions: [], vLedNames: [], size: [0, 0] },
-    "SK0M01": { vLedPositions: [], vLedNames: [], size: [0, 0] },
-    "SK0N01": { vLedPositions: [], vLedNames: [], size: [0, 0] },
-    "SK0N02": { vLedPositions: [], vLedNames: [], size: [0, 0] },
-    "SK0N03": { vLedPositions: [], vLedNames: [], size: [0, 0] }
+    "SK0402": { layout: 1, zones: [72], total: 72, image: "SK04" },
+    "SK0403": { layout: 1, zones: [96], total: 96, image: "SK04" },
+    "SK0404": { layout: 1, zones: [144], total: 144, image: "SK04" },
+    "SK0901": { layout: 1, zones: [14], total: 14, image: "SK09" },
+    "SK0801": { layout: 1, zones: [2], total: 2, image: "SK08" },
+    "SK0803": { layout: 1, zones: [10], total: 10, image: "SK08" },
+    "SK0E01": { layout: 1, zones: [16], total: 16, image: "SK0E" },
+    "SK0H01": { layout: 1, zones: [2], total: 2, image: "SK0H" },
+    "SK0H02": { layout: 1, zones: [4], total: 4, image: "SK0H" },
+    "SK0S01": { layout: 1, zones: [32], total: 32, image: "SK0J" }, // Image is placeholder
+    "SK0J01": { layout: 1, zones: [120], total: 120, image: "SK0J01" },
+    "SK0K01": { layout: 1, zones: [120], total: 120, image: "SK0J" }, // Image is placeholder
+    "SK0K02": { layout: 1, zones: [15], total: 15, image: "SK0J" }, // Image is placeholder
+    "SK0M01": { layout: 1, zones: [24], total: 24, image: "SK0M" },
+    "SK0N01": { layout: 1, zones: [256], total: 256, image: "SK0J" }, // Image is placeholder
+    "SK0N02": { layout: 1, zones: [1024], total: 1024, image: "SK0J" }, // Image is placeholder
+    "SK0N03": { layout: 1, zones: [253], total: 253, image: "SK0N03" }
 }
 
-export function LedNames() {
+// export function LedNames() {
+//     if (skydimoModel && deviceConfig[skydimoModel]) {
+//         return deviceConfig[skydimoModel].vLedNames;
+//     } else {
+//         return ["Led"];
+//     }
+// }
+// export function LedPositions() {
+//     if (skydimoModel && deviceConfig[skydimoModel]) {
+//         return deviceConfig[skydimoModel].vLedPositions;
+//     } else {
+//         return [[0,0]];
+//     }
+// }
+// export function Size() {
+//     if (skydimoModel && deviceConfig[skydimoModel]) {
+//         return deviceConfig[skydimoModel].size;
+//     } else {
+//         return [1, 1];
+//     }
+// }
+// export function LedNames() { return vLedNames; }
+// export function LedPositions() { return vLedPositions; }
+export function ImageUrl() {
     if (skydimoModel && deviceConfig[skydimoModel]) {
-        return deviceConfig[skydimoModel].vLedNames;
+        return getDeviceImage(deviceConfig[skydimoModel].image);
     } else {
-        return ["Led"];
-    }
-}
-export function LedPositions() {
-    if (skydimoModel && deviceConfig[skydimoModel]) {
-        return deviceConfig[skydimoModel].vLedPositions;
-    } else {
-        return [[0,0]];
-    }
-}
-export function Size() {
-    if (skydimoModel && deviceConfig[skydimoModel]) {
-        return deviceConfig[skydimoModel].size;
-    } else {
-        return [1, 1];
+        return "https://dev-dl.skydimo.com/assets/device/SK0J.jpg";
     }
 }
 
@@ -195,25 +192,42 @@ function sendColors(overrideColor) {
     }
     if (!skydimoInfoRead) return;
 
-    const count = deviceConfig[skydimoModel].vLedPositions.length;
-    const RGBData = [];
+    // const count = deviceConfig[skydimoModel].vLedPositions.length;
 
-    for (let i = 0; i < count; i++) {
-        const [x, y] = deviceConfig[skydimoModel].vLedPositions[i];
-        let color;
 
-        if (overrideColor) {
-            color = hexToRgb(shutdownColor);
-        } else if (LightingMode === "Forced") {
-            color = hexToRgb(forcedColor);
-        } else {
-            color = device.color(x, y);
-        }
+    // for (let i = 0; i < count; i++) {
+    //     const [x, y] = deviceConfig[skydimoModel].vLedPositions[i];
+    //     let color;
 
-        // Skydimo expects RGB order
-        RGBData.push(color[0]); // R
-        RGBData.push(color[1]); // G
-        RGBData.push(color[2]); // B
+    //     if (overrideColor) {
+    //         color = hexToRgb(shutdownColor);
+    //     } else if (LightingMode === "Forced") {
+    //         color = hexToRgb(forcedColor);
+    //     } else {
+    //         color = device.color(x, y);
+    //     }
+
+    //     // Skydimo expects RGB order
+    //     RGBData.push(color[0]); // R
+    //     RGBData.push(color[1]); // G
+    //     RGBData.push(color[2]); // B
+    // }
+
+    let RGBData = [];
+    const config = deviceConfig[skydimoModel];
+    switch (config.layout) {
+        case 2:
+            RGBData = [...getZoneColors(1, overrideColor), ...getZoneColors(2, overrideColor)];
+            break;
+        case 3:
+            RGBData = [...getZoneColors(1, overrideColor), ...getZoneColors(2, overrideColor), ...getZoneColors(3, overrideColor)];
+            break;
+        case 4:
+            RGBData = [...getZoneColors(1, overrideColor), ...getZoneColors(2, overrideColor), ...getZoneColors(3, overrideColor), ...getZoneColors(4, overrideColor)];
+            break;
+        default:
+            RGBData = getZoneColors(1, overrideColor);
+            break;
     }
 
     // Build Adalight header: "Ada" + 0x00 + count (2 bytes)
@@ -249,7 +263,7 @@ function getDeviceInfo() {
     const bytes = Array.from(cmd).map(c => c.charCodeAt(0));
     serial.write(bytes);
 
-    // Wait briefly for response (100ms)
+    // Wait briefly for response (1000ms)
     device.pause(1000);
 
     // Read response (up to 64 bytes)
@@ -280,8 +294,10 @@ function getDeviceInfo() {
                 device.log(`No configuration found for model: ${model}, please contact SignalRGB support.`);
             } else {
                 device.setName(device_name);
-                device.setSize(devConfig.size);
-                device.setControllableLeds(devConfig.vLedNames, devConfig.vLedPositions);
+                // device.setSize(devConfig.size);
+                // device.setControllableLeds(devConfig.vLedNames, devConfig.vLedPositions);
+                buildSubdeviceFromConfig(devConfig);
+                device.setImageFromUrl(getDeviceImage(devConfig.image));
                 device.setFrameRateTarget(60);
                 device.log("Device Name:", device_name);
             }
@@ -299,4 +315,127 @@ function getDeviceInfo() {
     }
 
     return false;
+}
+
+function getZoneColors(zone, overrideColor) {
+    const RGBData = [];
+    const positions = generateLedPositions(zone);
+
+    for (let i = 0; i < positions.length; i++) {
+        const [x, y] = positions[i];
+        let color;
+
+        if (overrideColor) {
+            color = hexToRgb(shutdownColor);
+        } else if (LightingMode === "Forced") {
+            color = hexToRgb(forcedColor)
+        } else {
+            color = device.subdeviceColor(`CH${zone}`, x, y);
+        }
+
+        RGBData.push(color[0]); // R
+        RGBData.push(color[1]); // G
+        RGBData.push(color[2]); // B
+    }
+
+    return RGBData;
+}
+
+function getDeviceImage(image) {
+    return `https://dev-dl.skydimo.com/assets/device/${image}.jpg`;
+}
+
+function buildSubdeviceFromConfig(config) {
+    const zones = config.zones || [];
+    const zone1 = zones[0] || 0;
+    const zone2 = zones[1] || 0;
+    const zone3 = zones[2] || 0;
+    const zone4 = zones[3] || 0;
+
+    switch (config.layout) {
+        case 2:
+            device.createSubdevice("CH1");
+            device.setSubdeviceName("CH1", "Segment 1");
+            device.setSubdeviceSize("CH1", zone1, 1);
+            device.setSubdeviceLeds("CH1", generateLedNames(zone1), generateLedPositions(zone1));
+            device.setSubdeviceImageUrl("CH1", config.image);
+
+            device.createSubdevice("CH2");
+            device.setSubdeviceName("CH2", "Segment 2");
+            device.setSubdeviceSize("CH2", zone2, 1);
+            device.setSubdeviceLeds("CH2", generateLedNames(zone2, zone1), generateLedPositions(zone2));
+            device.setSubdeviceImageUrl("CH2", config.image);
+            break;
+
+        case 3:
+            device.createSubdevice("CH1");
+            device.setSubdeviceName("CH1", "Segment 1");
+            device.setSubdeviceSize("CH1", zone1, 1);
+            device.setSubdeviceLeds("CH1", generateLedNames(zone1), generateLedPositions(zone1));
+            device.setSubdeviceImageUrl("CH1", config.image);
+
+            device.createSubdevice("CH2");
+            device.setSubdeviceName("CH2", "Segment 2");
+            device.setSubdeviceSize("CH2", zone2, 1);
+            device.setSubdeviceLeds("CH2", generateLedNames(zone2, zone1), generateLedPositions(zone2));
+            device.setSubdeviceImageUrl("CH2", config.image);
+
+            device.createSubdevice("CH3");
+            device.setSubdeviceName("CH3", "Segment 3");
+            device.setSubdeviceSize("CH3", zone3, 1);
+            device.setSubdeviceLeds("CH3", generateLedNames(zone3, zone1 + zone2), generateLedPositions(zone3));
+            device.setSubdeviceImageUrl("CH3", config.image);
+            break;
+
+        case 4:
+            device.createSubdevice("CH1");
+            device.setSubdeviceName("CH1", "Segment 1");
+            device.setSubdeviceSize("CH1", zone1, 1);
+            device.setSubdeviceLeds("CH1", generateLedNames(zone1), generateLedPositions(zone1));
+            device.setSubdeviceImageUrl("CH1", config.image);
+
+            device.createSubdevice("CH2");
+            device.setSubdeviceName("CH2", "Segment 2");
+            device.setSubdeviceSize("CH2", zone2, 1);
+            device.setSubdeviceLeds("CH2", generateLedNames(zone2, zone1), generateLedPositions(zone2));
+            device.setSubdeviceImageUrl("CH2", config.image);
+
+            device.createSubdevice("CH3");
+            device.setSubdeviceName("CH3", "Segment 3");
+            device.setSubdeviceSize("CH3", zone3, 1);
+            device.setSubdeviceLeds("CH3", generateLedNames(zone3, zone1 + zone2), generateLedPositions(zone3));
+            device.setSubdeviceImageUrl("CH3", config.image);
+
+            device.createSubdevice("CH4");
+            device.setSubdeviceName("CH4", "Segment 4");
+            device.setSubdeviceSize("CH4", zone4, 1);
+            device.setSubdeviceLeds("CH4", generateLedNames(zone4, zone1 + zone2 + zone3), generateLedPositions(zone4));
+            device.setSubdeviceImageUrl("CH4", config.image);
+            break;
+
+        default:
+            device.createSubdevice("CH1");
+            device.setSubdeviceName("CH1", "Device");
+            device.setSubdeviceSize("CH1", zone1, 1);
+            device.setSubdeviceLeds("CH1", generateLedNames(zone1), generateLedPositions(zone1));
+            device.setSubdeviceImageUrl("CH1", config.image);
+            break;
+    }
+}
+
+function generateLedNames(count, start = 1) {
+    const names = [];
+
+    for (let i = start; i <= count; i++) {
+        names.push(`LED ${i}`);
+    }
+    return names;
+}
+
+function generateLedPositions(count) {
+    const positions = [];
+    for (let i = 0; i < count; i++) {
+        positions.push([i, 0]);
+    }
+    return positions;
 }
