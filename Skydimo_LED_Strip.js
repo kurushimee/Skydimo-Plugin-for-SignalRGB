@@ -6,8 +6,7 @@ export function Publisher() { return "I'm Not MentaL"; }
 export function Documentation() { return "troubleshooting/skydimo"; }
 export function Type() { return "serial"; }
 export function DeviceType() { return "lightingcontroller"; }
-// export function Size() { return [15, 1]; }
-export function SupportsSubdevices() { return true; }
+export function SubdeviceController() { return true; }
 /* global
 shutdownColor:readonly
 LightingMode:readonly
@@ -24,8 +23,6 @@ export function ControllableParameters() {
 let skydimoPortName = null;
 let skydimoModel = null;
 let skydimoInfoRead = false;
-let vLedNames = [];
-let vLedPositions = [];
 
 const deviceConfig = {
     // 2-zone models
@@ -76,29 +73,6 @@ const deviceConfig = {
     "SK0N03": { layout: 1, zones: [253], total: 253, image: "SK0N03" }
 }
 
-// export function LedNames() {
-//     if (skydimoModel && deviceConfig[skydimoModel]) {
-//         return deviceConfig[skydimoModel].vLedNames;
-//     } else {
-//         return ["Led"];
-//     }
-// }
-// export function LedPositions() {
-//     if (skydimoModel && deviceConfig[skydimoModel]) {
-//         return deviceConfig[skydimoModel].vLedPositions;
-//     } else {
-//         return [[0,0]];
-//     }
-// }
-// export function Size() {
-//     if (skydimoModel && deviceConfig[skydimoModel]) {
-//         return deviceConfig[skydimoModel].size;
-//     } else {
-//         return [1, 1];
-//     }
-// }
-// export function LedNames() { return vLedNames; }
-// export function LedPositions() { return vLedPositions; }
 export function ImageUrl() {
     if (skydimoModel && deviceConfig[skydimoModel]) {
         return getDeviceImage(deviceConfig[skydimoModel].image);
@@ -192,58 +166,26 @@ function sendColors(overrideColor) {
     }
     if (!skydimoInfoRead) return;
 
-    // const count = deviceConfig[skydimoModel].vLedPositions.length;
-
-
-    // for (let i = 0; i < count; i++) {
-    //     const [x, y] = deviceConfig[skydimoModel].vLedPositions[i];
-    //     let color;
-
-    //     if (overrideColor) {
-    //         color = hexToRgb(shutdownColor);
-    //     } else if (LightingMode === "Forced") {
-    //         color = hexToRgb(forcedColor);
-    //     } else {
-    //         color = device.color(x, y);
-    //     }
-
-    //     // Skydimo expects RGB order
-    //     RGBData.push(color[0]); // R
-    //     RGBData.push(color[1]); // G
-    //     RGBData.push(color[2]); // B
-    // }
-
-    let RGBData = [];
+    const RGBData = [];
     const config = deviceConfig[skydimoModel];
-    switch (config.layout) {
-        case 2:
-            RGBData = [...getZoneColors(1, overrideColor), ...getZoneColors(2, overrideColor)];
-            break;
-        case 3:
-            RGBData = [...getZoneColors(1, overrideColor), ...getZoneColors(2, overrideColor), ...getZoneColors(3, overrideColor)];
-            break;
-        case 4:
-            RGBData = [...getZoneColors(1, overrideColor), ...getZoneColors(2, overrideColor), ...getZoneColors(3, overrideColor), ...getZoneColors(4, overrideColor)];
-            break;
-        default:
-            RGBData = getZoneColors(1, overrideColor);
-            break;
+    const count = config.total - 1;
+
+    // Get colors from each segments.
+    for (let i = 0; i < config.layout; i++) {
+        RGBData.push(getZoneColors(i + 1, config.zones[i], overrideColor));
     }
+    // Convert RGB array of arrays to one single flat array.
+    const MergedRGBData = [].concat.apply([], RGBData);
 
     // Build Adalight header: "Ada" + 0x00 + count (2 bytes)
-    const header = [
-        0x41, 0x64, 0x61, 0x00,
-        (count >> 8) & 0xFF,
-        count & 0xFF
-    ];
-
-    const packet = [...header, ...RGBData];
+    const header = [0x41, 0x64, 0x61, 0x00, (count >> 8) & 0xFF, count & 0xFF];
+    const packet = [...header, ...MergedRGBData];
     const success = serial.write(packet);
 
     if (!success) console.error("Failed to write LED colors");
 }
 
-// Convert hex string to RGB array
+// Convert hex string to RGB array.
 function hexToRgb(hex) {
     const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
     return [
@@ -253,6 +195,7 @@ function hexToRgb(hex) {
     ];
 }
 
+// Skydimo's unconventional method of getting device model and serial no.
 function getDeviceInfo() {
     if (!skydimoPortName || !serial.isConnected()) {
         return false;
@@ -294,8 +237,6 @@ function getDeviceInfo() {
                 device.log(`No configuration found for model: ${model}, please contact SignalRGB support.`);
             } else {
                 device.setName(device_name);
-                // device.setSize(devConfig.size);
-                // device.setControllableLeds(devConfig.vLedNames, devConfig.vLedPositions);
                 buildSubdeviceFromConfig(devConfig);
                 device.setImageFromUrl(getDeviceImage(devConfig.image));
                 device.setFrameRateTarget(60);
@@ -317,9 +258,10 @@ function getDeviceInfo() {
     return false;
 }
 
-function getZoneColors(zone, overrideColor) {
+// Get Zone (Segment) colors.
+function getZoneColors(zone, count, overrideColor) {
     const RGBData = [];
-    const positions = generateLedPositions(zone);
+    const positions = generateLedPositions(count);
 
     for (let i = 0; i < positions.length; i++) {
         const [x, y] = positions[i];
@@ -347,79 +289,21 @@ function getDeviceImage(image) {
 
 function buildSubdeviceFromConfig(config) {
     const zones = config.zones || [];
-    const zone1 = zones[0] || 0;
-    const zone2 = zones[1] || 0;
-    const zone3 = zones[2] || 0;
-    const zone4 = zones[3] || 0;
+    const layout = config.layout || 1;
 
-    switch (config.layout) {
-        case 2:
-            device.createSubdevice("CH1");
-            device.setSubdeviceName("CH1", "Segment 1");
-            device.setSubdeviceSize("CH1", zone1, 1);
-            device.setSubdeviceLeds("CH1", generateLedNames(zone1), generateLedPositions(zone1));
-            device.setSubdeviceImageUrl("CH1", config.image);
+    let offset = 0;
+    for (let i = 0; i < layout; i++) {
+        const zoneSize = zones[i] || 0;
+        const channel = `CH${i + 1}`;
+        const name = layout === 1 ? "Device" : `Segment ${i + 1}`;
 
-            device.createSubdevice("CH2");
-            device.setSubdeviceName("CH2", "Segment 2");
-            device.setSubdeviceSize("CH2", zone2, 1);
-            device.setSubdeviceLeds("CH2", generateLedNames(zone2, zone1), generateLedPositions(zone2));
-            device.setSubdeviceImageUrl("CH2", config.image);
-            break;
+        device.createSubdevice(channel);
+        device.setSubdeviceName(channel, name);
+        device.setSubdeviceSize(channel, zoneSize, 1);
+        device.setSubdeviceLeds(channel, generateLedNames(zoneSize, offset), generateLedPositions(zoneSize));
+        device.setSubdeviceImageUrl(channel, getDeviceImage(config.image));
 
-        case 3:
-            device.createSubdevice("CH1");
-            device.setSubdeviceName("CH1", "Segment 1");
-            device.setSubdeviceSize("CH1", zone1, 1);
-            device.setSubdeviceLeds("CH1", generateLedNames(zone1), generateLedPositions(zone1));
-            device.setSubdeviceImageUrl("CH1", config.image);
-
-            device.createSubdevice("CH2");
-            device.setSubdeviceName("CH2", "Segment 2");
-            device.setSubdeviceSize("CH2", zone2, 1);
-            device.setSubdeviceLeds("CH2", generateLedNames(zone2, zone1), generateLedPositions(zone2));
-            device.setSubdeviceImageUrl("CH2", config.image);
-
-            device.createSubdevice("CH3");
-            device.setSubdeviceName("CH3", "Segment 3");
-            device.setSubdeviceSize("CH3", zone3, 1);
-            device.setSubdeviceLeds("CH3", generateLedNames(zone3, zone1 + zone2), generateLedPositions(zone3));
-            device.setSubdeviceImageUrl("CH3", config.image);
-            break;
-
-        case 4:
-            device.createSubdevice("CH1");
-            device.setSubdeviceName("CH1", "Segment 1");
-            device.setSubdeviceSize("CH1", zone1, 1);
-            device.setSubdeviceLeds("CH1", generateLedNames(zone1), generateLedPositions(zone1));
-            device.setSubdeviceImageUrl("CH1", config.image);
-
-            device.createSubdevice("CH2");
-            device.setSubdeviceName("CH2", "Segment 2");
-            device.setSubdeviceSize("CH2", zone2, 1);
-            device.setSubdeviceLeds("CH2", generateLedNames(zone2, zone1), generateLedPositions(zone2));
-            device.setSubdeviceImageUrl("CH2", config.image);
-
-            device.createSubdevice("CH3");
-            device.setSubdeviceName("CH3", "Segment 3");
-            device.setSubdeviceSize("CH3", zone3, 1);
-            device.setSubdeviceLeds("CH3", generateLedNames(zone3, zone1 + zone2), generateLedPositions(zone3));
-            device.setSubdeviceImageUrl("CH3", config.image);
-
-            device.createSubdevice("CH4");
-            device.setSubdeviceName("CH4", "Segment 4");
-            device.setSubdeviceSize("CH4", zone4, 1);
-            device.setSubdeviceLeds("CH4", generateLedNames(zone4, zone1 + zone2 + zone3), generateLedPositions(zone4));
-            device.setSubdeviceImageUrl("CH4", config.image);
-            break;
-
-        default:
-            device.createSubdevice("CH1");
-            device.setSubdeviceName("CH1", "Device");
-            device.setSubdeviceSize("CH1", zone1, 1);
-            device.setSubdeviceLeds("CH1", generateLedNames(zone1), generateLedPositions(zone1));
-            device.setSubdeviceImageUrl("CH1", config.image);
-            break;
+        offset += zoneSize;
     }
 }
 
