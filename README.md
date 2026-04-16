@@ -38,12 +38,17 @@
     <td>144</td>
   </tr>
   <tr>
-    <td>
+    <td rowspan="2" align="center" valign="middle">
       <img src="https://dev-dl.skydimo.com/assets/device/SK09.jpg" width="100">
     </td>
     <td>SK0901</td>
     <td>Single</td>
     <td>14</td>
+  </tr>
+    <tr>
+    <td>SK0902</td>
+    <td>Single</td>
+    <td>49</td>
   </tr>
   <tr>
     <td rowspan="2" align="center" valign="middle">
