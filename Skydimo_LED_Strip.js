@@ -1,4 +1,4 @@
-import { udp } from "@SignalRGB/udp";
+import udp from "@SignalRGB/udp";
 
 export function Name() { return "Skydimo LED Strip (Bridged)"; }
 export function VendorId() { return 0x1A86; }
@@ -136,8 +136,30 @@ function openSocket() {
     const host = (typeof bridgeHost !== "undefined" && bridgeHost) ? bridgeHost : "127.0.0.1";
     const port = parseInt(bridgePort, 10) || 19624;
 
+    // If the import didn't give us a usable udp object, try registering it
+    // as a runtime feature. SignalRGB's module loader is undocumented enough
+    // that we cover both paths.
+    let udpRef = udp;
+    if (!udpRef || typeof udpRef.createSocket !== "function") {
+        device.log("Default udp import unusable (typeof=" + (typeof udpRef) + "). Trying device.addFeature('udp')...");
+        try {
+            device.addFeature("udp");
+            // addFeature creates a global with the feature's name.
+            if (typeof globalThis !== "undefined" && globalThis.udp) udpRef = globalThis.udp;
+        } catch (e) {
+            device.log("device.addFeature('udp') threw: " + e);
+        }
+    }
+
+    if (!udpRef || typeof udpRef.createSocket !== "function") {
+        device.log("UDP module is not available in this plugin context. " +
+                   "udp keys: " + (udpRef ? Object.keys(udpRef).join(",") : "n/a"));
+        socket = null;
+        return;
+    }
+
     try {
-        socket = udp.createSocket();
+        socket = udpRef.createSocket();
         socket.on("error", (err) => {
             device.log("UDP error: " + err);
         });
