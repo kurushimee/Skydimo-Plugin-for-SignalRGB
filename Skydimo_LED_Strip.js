@@ -12,6 +12,14 @@ export function Documentation() { return "troubleshooting/skydimo"; }
 // level.
 export function Type() { return "serial"; }
 export function DeviceType() { return "lightingcontroller"; }
+// 68/69 bundled subdevice plugins declare these. Asrock_Monitor_Controller
+// (the closest analog — 4-zone Left/Top/Right/Bottom monitor ambient strip)
+// also declares LedNames/LedPositions as empty arrays alongside subdevices.
+export function Size() { return [1, 1]; }
+export function DefaultPosition() { return [0, 0]; }
+export function DefaultScale() { return 1.0; }
+export function LedNames() { return []; }
+export function LedPositions() { return []; }
 export function SubdeviceController() { return true; }
 
 /* global
@@ -191,6 +199,14 @@ function rebuildSubdevices() {
     if (!config) {
         device.log("Unknown Skydimo model: " + currentModel);
         return;
+    }
+
+    // Purge any prior subdevices in case Initialize and ondeviceModelChanged
+    // both fire on startup. Re-creating a channel without removing it first
+    // can leave the third subdevice in a state where subdeviceColor() reads
+    // back as [0,0,0] (matches the JPU ELITE plugin's pattern for this).
+    for (let i = 1; i <= 4; i++) {
+        try { device.removeSubdevice(`CH${i}`); } catch (e) { /* not present */ }
     }
 
     device.setName("Skydimo " + currentModel);
