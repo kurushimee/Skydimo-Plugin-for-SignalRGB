@@ -46,14 +46,13 @@ export function ControllableParameters() {
 let socket = null;
 let currentModel = null;
 
-// Diagnostic counters. Emitted in a single device.log line every ~10s
-// (matching the bridge script's stats cadence so the two terminals can be
-// read side-by-side). Reset in rebuildSubdevices and on each tick.
+// Diagnostic counters emitted in a single device.log line every ~10s
+// (matching the bridge script's stats cadence so the two terminals line up).
 let renderCount = 0;
 let udpSendFailCount = 0;
-let goodColorCount = [];
-let badColorCount = [];
-let lastZoneError = [];
+let zoneChangeCount = [];
+let zoneLastChecksum = [];
+let zoneSampleColor = [];
 let lastTickMs = 0;
 
 const deviceConfig = {
@@ -122,18 +121,19 @@ export function Initialize() {
 }
 
 export function Render() {
-    if (!socket) {
-        openSocket();
-    }
+    if (!socket) openSocket();
     sendColors();
     renderCount++;
-    maybeEmitDiagnosticTick();
+    if (Date.now() - lastTickMs >= 10000) emitTick();
 }
 
 export function Shutdown(SystemSuspending) {
     const color = SystemSuspending ? "#000000" : shutdownColor;
     sendColors(color);
-    closeSocket();
+    if (socket) {
+        try { socket.close(); } catch (e) { /* ignore */ }
+        socket = null;
+    }
 }
 
 // SignalRGB calls these when the user changes a setting in the device's
@@ -143,7 +143,10 @@ export function onbridgeHostChanged()  { openSocket(); }
 export function onbridgePortChanged()  { openSocket(); }
 
 function openSocket() {
-    closeSocket();
+    if (socket) {
+        try { socket.close(); } catch (e) { /* ignore */ }
+        socket = null;
+    }
 
     const host = (typeof bridgeHost !== "undefined" && bridgeHost) ? bridgeHost : "127.0.0.1";
     const port = parseInt(bridgePort, 10) || 19624;
@@ -156,7 +159,6 @@ function openSocket() {
         device.log("Default udp import unusable (typeof=" + (typeof udpRef) + "). Trying device.addFeature('udp')...");
         try {
             device.addFeature("udp");
-            // addFeature creates a global with the feature's name.
             if (typeof globalThis !== "undefined" && globalThis.udp) udpRef = globalThis.udp;
         } catch (e) {
             device.log("device.addFeature('udp') threw: " + e);
@@ -183,37 +185,6 @@ function openSocket() {
     }
 }
 
-function closeSocket() {
-    if (!socket) return;
-    try { socket.close(); } catch (e) { /* ignore */ }
-    socket = null;
-}
-
-function maybeEmitDiagnosticTick() {
-    const now = Date.now();
-    if (now - lastTickMs < 10000) return;
-
-    const zoneCount = goodColorCount.length;
-    const zoneParts = [];
-    for (let z = 0; z < zoneCount; z++) {
-        const err = lastZoneError[z] ? ` err="${lastZoneError[z]}"` : "";
-        zoneParts.push(`CH${z + 1}:${goodColorCount[z]}/${badColorCount[z]}${err}`);
-    }
-    device.log(`tick render=${renderCount} udpFail=${udpSendFailCount} ${zoneParts.join(" ")}`);
-
-    renderCount = 0;
-    udpSendFailCount = 0;
-    for (let z = 0; z < zoneCount; z++) {
-        goodColorCount[z] = 0;
-        badColorCount[z] = 0;
-        lastZoneError[z] = "";
-    }
-    lastTickMs = now;
-
-    // Re-affirm in case the host reset the target since the last tick.
-    device.setFrameRateTarget(30);
-}
-
 function rebuildSubdevices() {
     currentModel = (typeof deviceModel !== "undefined" && deviceModel) ? deviceModel : "SK0L27";
     const config = deviceConfig[currentModel];
@@ -224,33 +195,34 @@ function rebuildSubdevices() {
 
     device.setName("Skydimo " + currentModel);
     device.setImageFromUrl(getDeviceImage(config.image));
-    // 115200 baud limits us to ~38 fps for 96 LEDs (294 bytes/frame). 30 leaves
-    // headroom; raise it if your strip is shorter, lower it if you see flicker.
-    device.setFrameRateTarget(30);
 
     const zones  = config.zones || [];
     const layout = config.layout || 1;
 
-    goodColorCount = new Array(layout).fill(0);
-    badColorCount  = new Array(layout).fill(0);
-    lastZoneError  = new Array(layout).fill("");
+    zoneChangeCount  = new Array(layout).fill(0);
+    zoneLastChecksum = new Array(layout).fill(0);
+    zoneSampleColor  = new Array(layout).fill("");
     renderCount = 0;
     udpSendFailCount = 0;
     lastTickMs = Date.now();
 
-    let offset = 0;
     for (let i = 0; i < layout; i++) {
         const zoneSize = zones[i] || 0;
         const channel  = `CH${i + 1}`;
         const name     = layout === 1 ? "Device" : `Segment ${i + 1}`;
 
+        const names = [];
+        const positions = [];
+        for (let j = 0; j < zoneSize; j++) {
+            names.push(`LED ${j + 1}`);
+            positions.push([j, 0]);
+        }
+
         device.createSubdevice(channel);
         device.setSubdeviceName(channel, name);
         device.setSubdeviceSize(channel, zoneSize, 1);
-        device.setSubdeviceLeds(channel, generateLedNames(zoneSize, offset), generateLedPositions(zoneSize));
+        device.setSubdeviceLeds(channel, names, positions);
         device.setSubdeviceImageUrl(channel, getDeviceImage(config.image));
-
-        offset += zoneSize;
     }
     device.log(`Configured ${currentModel}: ${layout} zone(s), ${config.total} LEDs total.`);
 }
@@ -261,16 +233,33 @@ function sendColors(overrideColor) {
     if (!config) return;
 
     const count = config.total - 1;
+    // Adalight header: "Ada" + 0x00 + hi + lo where (hi<<8)|lo == LED_count - 1
+    const packet = [0x41, 0x64, 0x61, 0x00, (count >> 8) & 0xFF, count & 0xFF];
 
-    const RGBData = [];
-    for (let i = 0; i < config.layout; i++) {
-        RGBData.push(getZoneColors(i + 1, config.zones[i], overrideColor));
+    const fixedRgb = overrideColor
+        ? hexToRgb(overrideColor)
+        : (LightingMode === "Forced" ? hexToRgb(forcedColor) : null);
+
+    for (let z = 0; z < config.layout; z++) {
+        const channel = `CH${z + 1}`;
+        const zoneSize = config.zones[z];
+        let checksum = 0;
+        let firstR = 0, firstG = 0, firstB = 0;
+
+        for (let x = 0; x < zoneSize; x++) {
+            const c = fixedRgb || device.subdeviceColor(channel, x, 0);
+            const r = c[0] | 0, g = c[1] | 0, b = c[2] | 0;
+            packet.push(r, g, b);
+            checksum = (checksum * 31 + r * 65536 + g * 256 + b) | 0;
+            if (x === 0) { firstR = r; firstG = g; firstB = b; }
+        }
+
+        if (zoneLastChecksum[z] !== checksum) {
+            zoneChangeCount[z]++;
+            zoneLastChecksum[z] = checksum;
+        }
+        zoneSampleColor[z] = "#" + toHex2(firstR) + toHex2(firstG) + toHex2(firstB);
     }
-    const merged = [].concat.apply([], RGBData);
-
-    // Adalight header: "Ada" + 0x00 + (count-1) high byte + low byte
-    const header = [0x41, 0x64, 0x61, 0x00, (count >> 8) & 0xFF, count & 0xFF];
-    const packet = [...header, ...merged];
 
     try {
         socket.send(packet);
@@ -281,78 +270,26 @@ function sendColors(overrideColor) {
     }
 }
 
-// device.subdeviceColor occasionally returns undefined / non-array values
-// (suspected for non-first subdevices in screen-sync modes). The original
-// code dereferenced result[0..2] directly, so a single bad return aborted
-// the entire frame via an uncaught exception — which lined up with both
-// the ~1 fps cadence (host re-running the plugin on a watchdog) and the
-// "third subdevice freezes after one frame" symptom. Wrap and validate.
-function safeSubdeviceColor(channel, x, y, zoneIdx) {
-    let result;
-    try {
-        result = device.subdeviceColor(channel, x, y);
-    } catch (e) {
-        if (!lastZoneError[zoneIdx]) lastZoneError[zoneIdx] = "throw: " + (e && e.message ? e.message : String(e));
-        badColorCount[zoneIdx]++;
-        return [0, 0, 0];
+function emitTick() {
+    const parts = [];
+    for (let z = 0; z < zoneChangeCount.length; z++) {
+        parts.push(`CH${z + 1}=chg${zoneChangeCount[z]}/${zoneSampleColor[z] || "n/a"}`);
     }
-    if (!result || !Number.isFinite(result[0]) || !Number.isFinite(result[1]) || !Number.isFinite(result[2])) {
-        if (!lastZoneError[zoneIdx]) {
-            const desc = result === undefined ? "undefined" : (result === null ? "null" : (typeof result + ":" + JSON.stringify(result).slice(0, 40)));
-            lastZoneError[zoneIdx] = "bad shape: " + desc;
-        }
-        badColorCount[zoneIdx]++;
-        return [0, 0, 0];
-    }
-    goodColorCount[zoneIdx]++;
-    return result;
+    device.log(`tick render=${renderCount} udpFail=${udpSendFailCount} ${parts.join(" ")}`);
+
+    renderCount = 0;
+    udpSendFailCount = 0;
+    for (let z = 0; z < zoneChangeCount.length; z++) zoneChangeCount[z] = 0;
+    lastTickMs = Date.now();
 }
 
-function getZoneColors(zone, count, overrideColor) {
-    const out = [];
-    const positions = generateLedPositions(count);
-    const zoneIdx = zone - 1;
-
-    for (let i = 0; i < positions.length; i++) {
-        try {
-            const [x, y] = positions[i];
-            let color;
-
-            if (overrideColor) {
-                color = hexToRgb(overrideColor);
-            } else if (LightingMode === "Forced") {
-                color = hexToRgb(forcedColor);
-            } else {
-                color = safeSubdeviceColor(`CH${zone}`, x, y, zoneIdx);
-            }
-
-            out.push(color[0], color[1], color[2]);
-        } catch (e) {
-            if (!lastZoneError[zoneIdx]) lastZoneError[zoneIdx] = "loop: " + (e && e.message ? e.message : String(e));
-            out.push(0, 0, 0);
-        }
-    }
-    return out;
+function toHex2(n) {
+    const s = (n & 0xFF).toString(16);
+    return s.length === 1 ? "0" + s : s;
 }
 
 function hexToRgb(hex) {
     const m = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
     if (!m) return [0, 0, 0];
     return [parseInt(m[1], 16), parseInt(m[2], 16), parseInt(m[3], 16)];
-}
-
-function generateLedNames(count, start = 1) {
-    const names = [];
-    for (let i = start; i <= count + start - 1; i++) {
-        names.push(`LED ${i}`);
-    }
-    return names;
-}
-
-function generateLedPositions(count) {
-    const positions = [];
-    for (let i = 0; i < count; i++) {
-        positions.push([i, 0]);
-    }
-    return positions;
 }
