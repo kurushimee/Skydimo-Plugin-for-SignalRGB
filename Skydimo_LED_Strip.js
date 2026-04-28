@@ -46,6 +46,16 @@ export function ControllableParameters() {
 let socket = null;
 let currentModel = null;
 
+// Diagnostic counters. Emitted in a single device.log line every ~10s
+// (matching the bridge script's stats cadence so the two terminals can be
+// read side-by-side). Reset in rebuildSubdevices and on each tick.
+let renderCount = 0;
+let udpSendFailCount = 0;
+let goodColorCount = [];
+let badColorCount = [];
+let lastZoneError = [];
+let lastTickMs = 0;
+
 const deviceConfig = {
     // 2-zone models
     "SK0201": { layout: 2, zones: [20, 20], total: 40, image: "SK02" },
@@ -116,6 +126,8 @@ export function Render() {
         openSocket();
     }
     sendColors();
+    renderCount++;
+    maybeEmitDiagnosticTick();
 }
 
 export function Shutdown(SystemSuspending) {
@@ -177,6 +189,31 @@ function closeSocket() {
     socket = null;
 }
 
+function maybeEmitDiagnosticTick() {
+    const now = Date.now();
+    if (now - lastTickMs < 10000) return;
+
+    const zoneCount = goodColorCount.length;
+    const zoneParts = [];
+    for (let z = 0; z < zoneCount; z++) {
+        const err = lastZoneError[z] ? ` err="${lastZoneError[z]}"` : "";
+        zoneParts.push(`CH${z + 1}:${goodColorCount[z]}/${badColorCount[z]}${err}`);
+    }
+    device.log(`tick render=${renderCount} udpFail=${udpSendFailCount} ${zoneParts.join(" ")}`);
+
+    renderCount = 0;
+    udpSendFailCount = 0;
+    for (let z = 0; z < zoneCount; z++) {
+        goodColorCount[z] = 0;
+        badColorCount[z] = 0;
+        lastZoneError[z] = "";
+    }
+    lastTickMs = now;
+
+    // Re-affirm in case the host reset the target since the last tick.
+    device.setFrameRateTarget(30);
+}
+
 function rebuildSubdevices() {
     currentModel = (typeof deviceModel !== "undefined" && deviceModel) ? deviceModel : "SK0L27";
     const config = deviceConfig[currentModel];
@@ -193,6 +230,14 @@ function rebuildSubdevices() {
 
     const zones  = config.zones || [];
     const layout = config.layout || 1;
+
+    goodColorCount = new Array(layout).fill(0);
+    badColorCount  = new Array(layout).fill(0);
+    lastZoneError  = new Array(layout).fill("");
+    renderCount = 0;
+    udpSendFailCount = 0;
+    lastTickMs = Date.now();
+
     let offset = 0;
     for (let i = 0; i < layout; i++) {
         const zoneSize = zones[i] || 0;
@@ -230,28 +275,62 @@ function sendColors(overrideColor) {
     try {
         socket.send(packet);
     } catch (e) {
-        device.log("UDP send failed: " + e);
+        udpSendFailCount++;
+        if (udpSendFailCount === 1) device.log("UDP send failed: " + e);
         socket = null;
     }
+}
+
+// device.subdeviceColor occasionally returns undefined / non-array values
+// (suspected for non-first subdevices in screen-sync modes). The original
+// code dereferenced result[0..2] directly, so a single bad return aborted
+// the entire frame via an uncaught exception — which lined up with both
+// the ~1 fps cadence (host re-running the plugin on a watchdog) and the
+// "third subdevice freezes after one frame" symptom. Wrap and validate.
+function safeSubdeviceColor(channel, x, y, zoneIdx) {
+    let result;
+    try {
+        result = device.subdeviceColor(channel, x, y);
+    } catch (e) {
+        if (!lastZoneError[zoneIdx]) lastZoneError[zoneIdx] = "throw: " + (e && e.message ? e.message : String(e));
+        badColorCount[zoneIdx]++;
+        return [0, 0, 0];
+    }
+    if (!result || !Number.isFinite(result[0]) || !Number.isFinite(result[1]) || !Number.isFinite(result[2])) {
+        if (!lastZoneError[zoneIdx]) {
+            const desc = result === undefined ? "undefined" : (result === null ? "null" : (typeof result + ":" + JSON.stringify(result).slice(0, 40)));
+            lastZoneError[zoneIdx] = "bad shape: " + desc;
+        }
+        badColorCount[zoneIdx]++;
+        return [0, 0, 0];
+    }
+    goodColorCount[zoneIdx]++;
+    return result;
 }
 
 function getZoneColors(zone, count, overrideColor) {
     const out = [];
     const positions = generateLedPositions(count);
+    const zoneIdx = zone - 1;
 
     for (let i = 0; i < positions.length; i++) {
-        const [x, y] = positions[i];
-        let color;
+        try {
+            const [x, y] = positions[i];
+            let color;
 
-        if (overrideColor) {
-            color = hexToRgb(overrideColor);
-        } else if (LightingMode === "Forced") {
-            color = hexToRgb(forcedColor);
-        } else {
-            color = device.subdeviceColor(`CH${zone}`, x, y);
+            if (overrideColor) {
+                color = hexToRgb(overrideColor);
+            } else if (LightingMode === "Forced") {
+                color = hexToRgb(forcedColor);
+            } else {
+                color = safeSubdeviceColor(`CH${zone}`, x, y, zoneIdx);
+            }
+
+            out.push(color[0], color[1], color[2]);
+        } catch (e) {
+            if (!lastZoneError[zoneIdx]) lastZoneError[zoneIdx] = "loop: " + (e && e.message ? e.message : String(e));
+            out.push(0, 0, 0);
         }
-
-        out.push(color[0], color[1], color[2]);
     }
     return out;
 }
